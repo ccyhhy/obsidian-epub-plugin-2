@@ -88,6 +88,7 @@ export default class EpubPlugin extends Plugin implements ProgressStore {
         if (!parsed) return;
 
         evt.preventDefault();
+        evt.stopPropagation();
 
         const activeFile = this.app.workspace.getActiveFile();
         const sourcePath = activeFile?.path ?? "";
@@ -105,12 +106,8 @@ export default class EpubPlugin extends Plugin implements ProgressStore {
           this.app.workspace.getLeaf("split", "vertical") ??
           this.app.workspace.getLeaf(false);
 
-        // 原子化打开 + eState 传参
-        // @ts-ignore
-        (leaf as any).setViewState(
-          { type: VIEW_TYPE_EPUB, state: { file: bookFile.path } },
-          { cfi64: parsed.cfi64 }
-        );
+        // 原子化打开 + eState 传参（更稳：直接 openFile 触发 FileView 生命周期）
+        leaf.openFile(bookFile, { active: true, eState: { cfi64: parsed.cfi64 } });
       })
     );
 

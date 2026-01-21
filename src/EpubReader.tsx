@@ -41,6 +41,7 @@ export const EpubReader: React.FC<Props> = ({
 }) => {
   const renditionRef = useRef<Rendition | null>(null);
   const pendingJumpRef = useRef<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const [location, setLocation] = useState<string | number>(initialLocation);
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null);
@@ -173,9 +174,14 @@ const clearSelection = useCallback(() => {
 
     const iframeRect = frameEl.getBoundingClientRect();
 
-    const x = iframeRect.left + rect.left + rect.width / 2;
-    let y = iframeRect.top + rect.top - 44; // above selection
-    if (y < 24) y = iframeRect.top + rect.bottom + 10; // below if near top
+    const absX = iframeRect.left + rect.left + rect.width / 2;
+    let absY = iframeRect.top + rect.top - 44; // above selection
+    if (absY < 24) absY = iframeRect.top + rect.bottom + 10; // below if near top
+
+    // Convert viewport coords -> container coords (avoids issues with transforms/fixed positioning in Obsidian)
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    const x = containerRect ? absX - containerRect.left : absX;
+    const y = containerRect ? absY - containerRect.top : absY;
 
     setToolbar({
       visible: true,
@@ -213,12 +219,12 @@ const clearSelection = useCallback(() => {
   }, [isDarkMode]);
 
   return (
-    <div style={{ height: "100vh", width: "100%", position: "relative" }}>
+    <div ref={containerRef} style={{ height: "100vh", width: "100%", position: "relative" }}>
       {/* Floating toolbar */}
       {toolbar && toolbar.visible && (
         <div
           style={{
-            position: "fixed",
+            position: "absolute",
             left: toolbar.x,
             top: toolbar.y,
             transform: "translateX(-50%)",

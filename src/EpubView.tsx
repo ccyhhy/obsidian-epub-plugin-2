@@ -88,7 +88,7 @@ Date: ${moment().toLocaleString()}
 
     // Refresh backlinks on metadata resolve (debounced)
     this.registerEvent(
-      this.app.metadataCache.on("resolve", () => {
+      this.app.metadataCache.on("resolved", () => {
         if (!this.file) return;
         if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
         this.refreshTimer = window.setTimeout(() => {
