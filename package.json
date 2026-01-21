@@ -1,6 +1,6 @@
 {
-	"name": "obsidian-epub-plugin",
-	"version": "1.0.3",
+	"name": "obsidian-epub reader-plugin",
+	"version": "1.0",
 	"description": "This is an ePub reader plugin for Obsidian. Can open document with \".epub\" file extension.",
 	"main": "src/main.js",
 	"scripts": {
@@ -13,7 +13,7 @@
 		"obsidian",
 		"obsidian-plugin"
 	],
-	"author": "caronchen",
+	"author": "caronchen/ccyhhy",
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^16.11.6",
