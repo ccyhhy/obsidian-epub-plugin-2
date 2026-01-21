@@ -51,15 +51,24 @@ export const EpubReader: React.FC<Props> = ({
 
   const isDarkMode = document.body.classList.contains("theme-dark");
 
-  const clearSelection = useCallback(() => {
-    renditionRef.current?.getContents()?.forEach((c: any) => {
-      try {
-        c.window?.getSelection?.()?.removeAllRanges?.();
-      } catch {
-        // ignore
-      }
-    });
-  }, []);
+const clearSelection = useCallback(() => {
+  const r = renditionRef.current;
+  if (!r) return;
+
+  // Type-safe: getContents() typing differs across epubjs/react-reader versions
+  const gc: any = (r as any).getContents?.();
+
+  const list: any[] = Array.isArray(gc) ? gc : gc ? [gc] : [];
+
+  for (const c of list) {
+    try {
+      c?.window?.getSelection?.()?.removeAllRanges?.();
+    } catch {
+      // ignore
+    }
+  }
+}, []);
+
 
   const writeClipboard = useCallback(
     async (text: string) => {
