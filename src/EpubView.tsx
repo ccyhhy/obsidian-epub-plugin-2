@@ -15,6 +15,11 @@ export interface ProgressStore {
   setProgress(bookPath: string, location: string | number): void;
 }
 
+// 扩展 ProgressStore 接口以包含 settings
+export interface EpubPluginInstance extends ProgressStore {
+  settings: EpubPluginSettings;
+}
+
 export class EpubView extends FileView {
   allowNoFile: false;
 
@@ -29,7 +34,7 @@ export class EpubView extends FileView {
   constructor(
     leaf: WorkspaceLeaf,
     private settings: EpubPluginSettings,
-    private progressStore: ProgressStore
+    private plugin: EpubPluginInstance
   ) {
     super(leaf);
     this.backlinkManager = new BacklinkManager(this.app);
@@ -57,19 +62,21 @@ export class EpubView extends FileView {
 
   private getFileName() {
     let filePath: string;
-    if (this.settings.useSameFolder) {
+    const currentSettings = this.plugin.settings;
+    if (currentSettings.useSameFolder) {
       filePath = `${this.file.parent.path}/`;
     } else {
-      filePath = this.settings.notePath.endsWith("/")
-        ? this.settings.notePath
-        : `${this.settings.notePath}/`;
+      filePath = currentSettings.notePath.endsWith("/")
+        ? currentSettings.notePath
+        : `${currentSettings.notePath}/`;
     }
     return `${filePath}${this.file.basename}.md`;
   }
 
   private getFileContent() {
+    const currentSettings = this.plugin.settings;
     return `---
-Tags: ${this.settings.tags}
+Tags: ${currentSettings.tags}
 Date: ${moment().toLocaleString()}
 ---
 
@@ -143,7 +150,7 @@ Date: ${moment().toLocaleString()}
     }
   }
 
-  private renderReader(): void {
+  renderReader(): void {
     if (!this.file || !this.fileContent) return;
 
     const viewHeaderEl = this.containerEl.parentElement?.querySelector("div.view-header");
@@ -163,43 +170,44 @@ Date: ${moment().toLocaleString()}
     const padBottom = 0;
 
     // Read progress from plugin data.json
-    const initialLocation = this.progressStore.getProgress(this.file.path) ?? 0;
+    const initialLocation = this.plugin.getProgress(this.file.path) ?? 0;
+
+    // 使用插件的最新设置而不是初始设置
+    const currentSettings = this.plugin.settings;
 
     const wrapperStyle: React.CSSProperties = {
       paddingTop: padTop,
       paddingBottom: padBottom,
       height: "100%",
       boxSizing: "border-box",
-      overflow: this.settings.scrolledView ? "auto" : "hidden",
+      overflow: currentSettings.scrolledView ? "auto" : "hidden",
     };
 
     ReactDOM.render(
       <div style={wrapperStyle}>
-        <EpubReader
-          app={this.app}
-          file={this.file}
-          contents={this.fileContent}
-          title={this.file.basename}
-          scrolled={this.settings.scrolledView}
-          highlightColor={this.settings.highlightColor}
-          fontSizePercent={this.settings.fontSizePercent}
-          followObsidianTheme={this.settings.followObsidianTheme}
-          followObsidianFont={this.settings.followObsidianFont}
-          selectionNotePath={this.settings.selectionNotePath}
-          selectionNoteUseSameFolder={this.settings.selectionNoteUseSameFolder}
-          noteTags={this.settings.tags}
-          initialLocation={initialLocation}
-          jumpCfiRange={this.jumpCfiRange}
-          highlights={this.highlights}
-          onLocationChange={(loc: string | number) => {
-            if (!this.file) return;
-            this.progressStore.setProgress(this.file.path, loc);
-          }}
-          onOpenNote={(note: TFile) => {
-            const leaf = this.app.workspace.getLeaf("split", "vertical") ?? this.app.workspace.getLeaf(false);
-            leaf.openFile(note);
-          }}
-        />
+          <EpubReader
+            app={this.app}
+            file={this.file}
+            contents={this.fileContent}
+            title={this.file.basename}
+            scrolled={currentSettings.scrolledView}
+            highlightColor={currentSettings.highlightColor}
+            highlightOpacity={currentSettings.highlightOpacity}
+            fontSizePercent={currentSettings.fontSizePercent}
+            followObsidianTheme={currentSettings.followObsidianTheme}
+            followObsidianFont={currentSettings.followObsidianFont}
+            initialLocation={initialLocation}
+            jumpCfiRange={this.jumpCfiRange}
+            highlights={this.highlights}
+            onLocationChange={(loc: string | number) => {
+              if (!this.file) return;
+              this.plugin.setProgress(this.file.path, loc);
+            }}
+            onOpenNote={(note: TFile) => {
+              const leaf = this.app.workspace.getLeaf("split", "vertical") ?? this.app.workspace.getLeaf(false);
+              leaf.openFile(note);
+            }}
+          />
       </div>,
       this.contentEl
     );

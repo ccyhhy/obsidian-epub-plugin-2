@@ -226,5 +226,19 @@ export default class EpubPlugin extends Plugin implements ProgressStore {
 
   async saveSettings() {
     await this.savePluginData();
+    // 通知所有打开的EpubView重新渲染以应用新设置
+    this.notifyViewsToRerender();
+  }
+
+  private notifyViewsToRerender(): void {
+    // 获取所有打开的Epub视图
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_EPUB);
+    leaves.forEach(leaf => {
+      const view = leaf.view;
+      if (view && view instanceof EpubView) {
+        // 调用renderReader方法重新渲染
+        view.renderReader();
+      }
+    });
   }
 }

@@ -69,3 +69,108 @@ export function parseEpubCfi64Link(hrefOrDataHref: string): { path: string; cfi6
 export function normalizeProgressKey(bookPath: string): string {
   return normalizePath(bookPath);
 }
+
+export function normalizeColor(input: string): string | null {
+  const raw = (input ?? "").trim();
+  if (!raw) return null;
+
+  const cleaned = raw.replace(/\s+/g, "");
+
+  if (cleaned.startsWith("#")) {
+    const hex = cleaned.slice(1);
+    if (hex.length === 3 && /^[0-9a-fA-F]{3}$/.test(hex)) {
+      return `#${hex.split("").map((c) => c + c).join("").toLowerCase()}`;
+    }
+    if (hex.length === 4 && /^[0-9a-fA-F]{4}$/.test(hex)) {
+      return `#${hex.split("").map((c) => c + c).join("").toLowerCase()}`;
+    }
+    if (hex.length === 6 && /^[0-9a-fA-F]{6}$/.test(hex)) {
+      return `#${hex.toLowerCase()}`;
+    }
+    if (hex.length === 8 && /^[0-9a-fA-F]{8}$/.test(hex)) {
+      return `#${hex.toLowerCase()}`;
+    }
+  }
+
+  const rgbMatch = cleaned.match(/^rgb\((\d+),(\d+),(\d+)\)$/i);
+  if (rgbMatch) {
+    const r = Math.min(255, Math.max(0, parseInt(rgbMatch[1], 10)));
+    const g = Math.min(255, Math.max(0, parseInt(rgbMatch[2], 10)));
+    const b = Math.min(255, Math.max(0, parseInt(rgbMatch[3], 10)));
+    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b
+      .toString(16)
+      .padStart(2, "0")}`;
+  }
+
+  const rgbaMatch = cleaned.match(/^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/i);
+  if (rgbaMatch) {
+    const r = Math.min(255, Math.max(0, parseInt(rgbaMatch[1], 10)));
+    const g = Math.min(255, Math.max(0, parseInt(rgbaMatch[2], 10)));
+    const b = Math.min(255, Math.max(0, parseInt(rgbaMatch[3], 10)));
+    const a = Math.min(1, Math.max(0, parseFloat(rgbaMatch[4])));
+    const alphaHex = Math.round(a * 255)
+      .toString(16)
+      .padStart(2, "0");
+    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b
+      .toString(16)
+      .padStart(2, "0")}${alphaHex}`;
+  }
+
+  const colorNames: Record<string, string> = {
+    red: "#ff0000",
+    green: "#008000",
+    blue: "#0000ff",
+    yellow: "#ffff00",
+    orange: "#ffa500",
+    purple: "#800080",
+    pink: "#ffc0cb",
+    brown: "#a52a2a",
+    black: "#000000",
+    white: "#ffffff",
+    gray: "#808080",
+    grey: "#808080",
+    gold: "#ffd700",
+    lightblue: "#add8e6",
+    lightgreen: "#90ee90",
+    lightyellow: "#ffffe0",
+    lightpink: "#ffb6c1",
+    cyan: "#00ffff",
+    magenta: "#ff00ff",
+    lime: "#00ff00",
+    teal: "#008080",
+    navy: "#000080",
+    maroon: "#800000",
+    olive: "#808000",
+    silver: "#c0c0c0",
+  };
+
+  const lowerName = cleaned.toLowerCase();
+  if (colorNames[lowerName]) {
+    return colorNames[lowerName];
+  }
+
+  if (/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+    return `#${cleaned.toLowerCase()}`;
+  }
+
+  if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+    return `#${cleaned.split("").map((c) => c + c).join("").toLowerCase()}`;
+  }
+
+  return null;
+}
+
+export function parseColorComponents(
+  input: string,
+  fallbackHex = "#ffd700"
+): { r: number; g: number; b: number; alpha: number } {
+  const normalized = normalizeColor(input) ?? fallbackHex;
+  const hex = normalized.startsWith("#") ? normalized.slice(1) : normalized;
+
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const alpha = hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1;
+
+  return { r, g, b, alpha };
+}

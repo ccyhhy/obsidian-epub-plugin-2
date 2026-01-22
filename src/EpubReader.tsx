@@ -1,10 +1,11 @@
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App, Notice, TFile, normalizePath } from "obsidian";
+import { createPortal } from "react-dom";
+import { App, Notice, TFile } from "obsidian";
 import { ReactReader, ReactReaderStyle, type IReactReaderStyle } from "react-reader";
 import type { Contents, Rendition } from "epubjs";
 import { BacklinkHighlight } from "./BacklinkManager";
-import { base64UrlEncode, sanitizeLinkText } from "./utils";
+import { base64UrlEncode, parseColorComponents, sanitizeLinkText } from "./utils";
 
 type ToolbarState = {
   visible: boolean;
@@ -16,41 +17,6 @@ type ToolbarState = {
 
 const DEFAULT_HIGHLIGHT_COLOR = "#ffd700";
 
-function normalizeHexColor(input: string): string | null {
-  const raw = (input ?? "").trim();
-  if (!raw) return null;
-  let hex = raw.startsWith("#") ? raw.slice(1) : raw;
-  if (hex.length === 3) {
-    hex = hex
-      .split("")
-      .map((c) => c + c)
-      .join("");
-  }
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
-  return `#${hex.toLowerCase()}`;
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const normalized = normalizeHexColor(hex) ?? DEFAULT_HIGHLIGHT_COLOR;
-  const r = parseInt(normalized.slice(1, 3), 16);
-  const g = parseInt(normalized.slice(3, 5), 16);
-  const b = parseInt(normalized.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function sanitizeFileName(input: string): string {
-  return (input ?? "")
-    .replace(/[\\\/:*?"<>|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function toTimestampId(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(
-    d.getMinutes()
-  )}${pad(d.getSeconds())}`;
-}
 
 type ObsidianTypography = {
   fontFamily: string;
@@ -97,12 +63,10 @@ type Props = {
   contents: ArrayBuffer;
   scrolled: boolean;
   highlightColor: string;
+  highlightOpacity: number;
   fontSizePercent: number;
   followObsidianTheme: boolean;
   followObsidianFont: boolean;
-  selectionNotePath: string;
-  selectionNoteUseSameFolder: boolean;
-  noteTags: string;
   initialLocation: string | number;
   jumpCfiRange: string | null;
   highlights: BacklinkHighlight[];
@@ -117,12 +81,10 @@ export const EpubReader: React.FC<Props> = ({
   contents,
   scrolled,
   highlightColor,
+  highlightOpacity,
   fontSizePercent,
   followObsidianTheme,
   followObsidianFont,
-  selectionNotePath,
-  selectionNoteUseSameFolder,
-  noteTags,
   initialLocation,
   jumpCfiRange,
   highlights,
@@ -134,6 +96,7 @@ export const EpubReader: React.FC<Props> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastSelectionAtRef = useRef(0);
   const highlightsRef = useRef<BacklinkHighlight[]>([]);
+  const selectionColorRef = useRef<string>("");
 
   const [rendition, setRendition] = useState<Rendition | null>(null);
   const [location, setLocation] = useState<string | number>(initialLocation);
@@ -142,6 +105,7 @@ export const EpubReader: React.FC<Props> = ({
   const [obsidianTypography, setObsidianTypography] = useState<ObsidianTypography>(() =>
     readObsidianTypography()
   );
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
 
   // Track backlink highlights we added so we can remove them before re-adding.
   const addedBacklinkCfisRef = useRef<string[]>([]);
@@ -178,6 +142,10 @@ export const EpubReader: React.FC<Props> = ({
     observer.observe(head, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, [followObsidianFont]);
+
+  useEffect(() => {
+    setPortalTarget(containerRef.current?.ownerDocument?.body ?? null);
+  }, []);
 
 const clearSelection = useCallback(() => {
   const r = renditionRef.current;
@@ -278,17 +246,47 @@ const clearSelection = useCallback(() => {
       const r = renditionRef.current;
       if (!r) return false;
 
-      if (await tryDisplayCfi(r, cfi)) return true;
+      const primary = getRangeStartCfi(cfi) ?? cfi;
+      if (await tryDisplayCfi(r, primary)) return true;
 
-      const fallback = getRangeStartCfi(cfi);
-      if (fallback && fallback !== cfi) {
-        return await tryDisplayCfi(r, fallback);
+      if (primary !== cfi) {
+        return await tryDisplayCfi(r, cfi);
       }
 
       return false;
     },
     [tryDisplayCfi]
   );
+
+  // 计算高亮颜色样式
+  const highlightStyles = useMemo(() => {
+    const { r, g, b, alpha } = parseColorComponents(highlightColor, DEFAULT_HIGHLIGHT_COLOR);
+    // 将透明度百分比转换为0-1范围，并保留颜色自身的alpha
+    const baseOpacity = (highlightOpacity / 100) * alpha;
+    const fillColor = `rgb(${r}, ${g}, ${b})`;
+    const fillOpacity = baseOpacity * 0.35;
+    const selectionOpacity = Math.min(0.5, baseOpacity * 0.5);
+    const selectionColor = `rgba(${r}, ${g}, ${b}, ${selectionOpacity})`;
+    const cornerRadius = 2;
+    return {
+      fillColor,
+      fillOpacity,
+      selectionColor,
+      cornerRadius,
+    };
+  }, [highlightColor, highlightOpacity]);
+
+  const applySelectionStyle = useCallback((c: Contents, color: string) => {
+    try {
+      const existing = c.document.getElementById("epubjs-selection-style") as HTMLStyleElement | null;
+      const style = existing ?? c.document.createElement("style");
+      style.id = "epubjs-selection-style";
+      style.innerHTML = `::selection { background: ${color}; }`;
+      if (!existing) c.document.head.appendChild(style);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // Receive jump request: if rendition not ready yet, hold it.
   useEffect(() => {
@@ -340,6 +338,16 @@ const clearSelection = useCallback(() => {
   }, [highlights]);
 
   useEffect(() => {
+    selectionColorRef.current = highlightStyles.selectionColor;
+    const r = renditionRef.current;
+    const contents: any = (r as any)?.getContents?.();
+    const list = Array.isArray(contents) ? contents : contents ? [contents] : [];
+    for (const c of list) {
+      applySelectionStyle(c, selectionColorRef.current);
+    }
+  }, [highlightStyles, applySelectionStyle]);
+
+  useEffect(() => {
     if (!rendition) return;
     applyTypography(rendition);
 
@@ -371,7 +379,9 @@ const clearSelection = useCallback(() => {
     if (!text || !text.trim()) return;
 
     const range = sel.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
+    const rects = range.getClientRects();
+    const rect = rects.length ? rects[0] : range.getBoundingClientRect();
+    if (!rect || (rect.width === 0 && rect.height === 0)) return;
 
     // Reliable iframe offset: frameElement of this contents
     const frameEl = contents.document?.defaultView?.frameElement as HTMLElement | null;
@@ -384,9 +394,8 @@ const clearSelection = useCallback(() => {
     if (absY < 24) absY = iframeRect.top + rect.bottom + 10; // below if near top
 
     // Convert viewport coords -> container coords (avoids issues with transforms/fixed positioning in Obsidian)
-    const containerRect = containerRef.current?.getBoundingClientRect();
-    const x = containerRect ? absX - containerRect.left : absX;
-    const y = containerRect ? absY - containerRect.top : absY;
+    const x = absX;
+    const y = absY;
 
     lastSelectionAtRef.current = Date.now();
     setToolbar({
@@ -412,28 +421,11 @@ const clearSelection = useCallback(() => {
       applyBacklinkHighlights(rendition, highlightsRef.current);
     };
 
-    const resolvedHighlight = normalizeHexColor(highlightColor) ?? DEFAULT_HIGHLIGHT_COLOR;
-    const highlightFill = hexToRgba(resolvedHighlight, 0.35);
-    const highlightStroke = hexToRgba(resolvedHighlight, 0.8);
-
     const hook = (c: Contents) => {
       try {
         const body = c.window.document.body;
         body.oncontextmenu = () => false;
-
-        const existing = c.document.getElementById("epubjs-backlink-style") as HTMLStyleElement | null;
-        const style = existing ?? c.document.createElement("style");
-        style.id = "epubjs-backlink-style";
-        style.innerHTML = `
-          .epubjs-backlink-hl { 
-            fill: ${highlightFill};
-            stroke: ${highlightStroke};
-            stroke-width: 1px;
-            cursor: pointer;
-          }
-          ::selection { background: rgba(120, 120, 255, 0.25); }
-        `;
-        if (!existing) c.document.head.appendChild(style);
+        applySelectionStyle(c, selectionColorRef.current);
       } catch {
         // ignore
       }
@@ -459,7 +451,30 @@ const clearSelection = useCallback(() => {
       rendition.off("rendered", handleRendered);
       contentHook?.unregister?.(hook);
     };
-  }, [rendition, onSelected, applyBacklinkHighlights, highlightColor]);
+  }, [rendition, onSelected, applyBacklinkHighlights, applySelectionStyle]);
+
+  useEffect(() => {
+    const doc = containerRef.current?.ownerDocument;
+    if (!doc) return;
+
+    const styleId = "epubjs-backlink-overlay-style";
+    const existing = doc.getElementById(styleId) as HTMLStyleElement | null;
+    const style = existing ?? doc.createElement("style");
+    style.id = styleId;
+    style.innerHTML = `
+      .epubjs-backlink-hl rect {
+        fill: ${highlightStyles.fillColor} !important;
+        fill-opacity: ${highlightStyles.fillOpacity} !important;
+        stroke: none !important;
+        stroke-opacity: 0 !important;
+        stroke-width: 0 !important;
+        rx: ${highlightStyles.cornerRadius}px;
+        ry: ${highlightStyles.cornerRadius}px;
+        cursor: pointer;
+      }
+    `;
+    if (!existing) doc.head.appendChild(style);
+  }, [highlightStyles]);
 
   const handleCopyLink = useCallback(async () => {
     if (!toolbar) return;
@@ -483,98 +498,24 @@ const clearSelection = useCallback(() => {
     }
   }, [toolbar, file.path, writeClipboard, clearSelection]);
 
-  const ensureFolder = useCallback(
-    async (folderPath: string) => {
-      const normalized = normalizePath(folderPath).replace(/^\/+/, "");
-      if (!normalized) return;
-
-      const parts = normalized.split("/").filter(Boolean);
-      let current = "";
-      for (const part of parts) {
-        current = current ? `${current}/${part}` : part;
-        const existing = app.vault.getAbstractFileByPath(current);
-        if (!existing) {
-          await app.vault.createFolder(current);
-        }
-      }
-    },
-    [app]
-  );
-
-  const buildSelectionNoteContent = useCallback(
-    (selection: string, link: string): string => {
-      const created = new Date().toISOString();
-      const tags = (noteTags ?? "").trim();
-      const frontmatter = tags
-        ? `---\ntags: ${tags}\ncreated: ${created}\n---\n\n`
-        : `---\ncreated: ${created}\n---\n\n`;
-      const quoted = selection
-        .split(/\r?\n/)
-        .map((line) => `> ${line}`)
-        .join("\n");
-      return `${frontmatter}${quoted}\n\n${link}\n`;
-    },
-    [noteTags]
-  );
-
-  const createSelectionNote = useCallback(async () => {
-    if (!toolbar) return;
-
-    let label = sanitizeLinkText(toolbar.text);
-    if (!label) label = "Quote";
-    if (label.length > 60) label = label.slice(0, 60) + "...";
-
-    const cfi64 = base64UrlEncode(toolbar.cfiRange);
-    const link = `[[${file.path}#cfi64=${cfi64}|${label}]]`;
-
-    const folder = selectionNoteUseSameFolder ? file.parent.path : selectionNotePath;
-    const targetFolder = normalizePath(folder || "/");
-
-    const safeBook = sanitizeFileName(file.basename).slice(0, 40) || "Book";
-    const safeLabel = sanitizeFileName(label).slice(0, 40);
-    const stamp = toTimestampId(new Date());
-    const base = safeLabel ? `${safeBook}-${safeLabel}-${stamp}` : `${safeBook}-${stamp}`;
-    const filename = `${base}.md`;
-
-    try {
-      await ensureFolder(targetFolder);
-
-      const folderPrefix = targetFolder === "/" ? "" : `${targetFolder}/`;
-      let path = normalizePath(`${folderPrefix}${filename}`);
-      let index = 1;
-      while (app.vault.getAbstractFileByPath(path)) {
-        path = normalizePath(`${folderPrefix}${base}-${index}.md`);
-        index += 1;
-      }
-
-      const content = buildSelectionNoteContent(toolbar.text, link);
-      const note = await app.vault.create(path, content);
-
-      const leaf = app.workspace.getLeaf("split", "vertical") ?? app.workspace.getLeaf(false);
-      leaf.openFile(note, { active: true });
-      new Notice("Note created");
-    } catch {
-      new Notice("Create note failed");
-    } finally {
-      setToolbar(null);
-      clearSelection();
-    }
-  }, [
-    toolbar,
-    file.path,
-    file.basename,
-    file.parent.path,
-    selectionNotePath,
-    selectionNoteUseSameFolder,
-    app,
-    ensureFolder,
-    buildSelectionNoteContent,
-    clearSelection,
-  ]);
-
   const readerStyles = useMemo<IReactReaderStyle>(() => {
     return isDarkMode ? darkReaderTheme : lightReaderTheme;
   }, [isDarkMode]);
+
+  const toolbarNode = toolbar && toolbar.visible ? (
+    <div
+      className="epub-toolbar"
+      style={{ left: toolbar.x, top: toolbar.y, position: "fixed" }}
+      onMouseDown={(e) => e.preventDefault()} // keep selection until click
+    >
+      <button
+        className="mod-cta epub-toolbar__button"
+        onClick={handleCopyLink}
+      >
+        Copy Link
+      </button>
+    </div>
+  ) : null;
 
   return (
     <div
@@ -587,52 +528,7 @@ const clearSelection = useCallback(() => {
       }}
     >
       {/* Floating toolbar */}
-      {toolbar && toolbar.visible && (
-        <div
-          style={{
-            position: "absolute",
-            left: toolbar.x,
-            top: toolbar.y,
-            transform: "translateX(-50%)",
-            background: "var(--background-primary)",
-            border: "1px solid var(--background-modifier-border)",
-            borderRadius: "8px",
-            boxShadow: "0 6px 18px rgba(0,0,0,0.25)",
-            padding: "6px 8px",
-            zIndex: 99999,
-            display: "flex",
-            gap: "6px",
-          }}
-          onMouseDown={(e) => e.preventDefault()} // keep selection until click
-        >
-          <button
-            className="mod-cta"
-            style={{
-              cursor: "pointer",
-              border: "none",
-              background: "transparent",
-              color: "var(--text-normal)",
-              fontSize: "13px",
-            }}
-            onClick={handleCopyLink}
-          >
-            Copy Link
-          </button>
-          <button
-            className="mod-cta"
-            style={{
-              cursor: "pointer",
-              border: "none",
-              background: "transparent",
-              color: "var(--text-normal)",
-              fontSize: "13px",
-            }}
-            onClick={createSelectionNote}
-          >
-            Create Note
-          </button>
-        </div>
-      )}
+      {portalTarget && toolbarNode ? createPortal(toolbarNode, portalTarget) : toolbarNode}
 
       <ReactReader
         title={title}
