@@ -23,6 +23,7 @@ export class EpubView extends FileView {
 
   private readonly backlinkManager: BacklinkManager;
   private highlights: BacklinkHighlight[] = [];
+  private highlightsKey: string | null = null;
   private refreshTimer: number | null = null;
 
   constructor(
@@ -85,6 +86,7 @@ Date: ${moment().toLocaleString()}
 
     // Initial backlinks (MVP)
     this.highlights = this.backlinkManager.getHighlightsForBook(file);
+    this.highlightsKey = this.getHighlightsKey(this.highlights);
 
     // Refresh backlinks on metadata resolve (debounced)
     this.registerEvent(
@@ -93,7 +95,11 @@ Date: ${moment().toLocaleString()}
         if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
         this.refreshTimer = window.setTimeout(() => {
           if (!this.file) return;
-          this.highlights = this.backlinkManager.getHighlightsForBook(this.file);
+          const next = this.backlinkManager.getHighlightsForBook(this.file);
+          const nextKey = this.getHighlightsKey(next);
+          if (nextKey === this.highlightsKey) return;
+          this.highlights = next;
+          this.highlightsKey = nextKey;
           this.renderReader();
         }, 150);
       })
@@ -153,18 +159,35 @@ Date: ${moment().toLocaleString()}
 
     const tocOffset = (viewHeaderHeight < viewHeaderWidth ? viewHeaderHeight : 0) + viewContentPaddingTop + 1;
     const tocBottomOffset = viewContentPaddingBottom;
+    const padTop = 0;
+    const padBottom = 0;
 
     // Read progress from plugin data.json
     const initialLocation = this.progressStore.getProgress(this.file.path) ?? 0;
 
+    const wrapperStyle: React.CSSProperties = {
+      paddingTop: padTop,
+      paddingBottom: padBottom,
+      height: "100%",
+      boxSizing: "border-box",
+      overflow: this.settings.scrolledView ? "auto" : "hidden",
+    };
+
     ReactDOM.render(
-      <div style={{ paddingTop: tocOffset, paddingBottom: tocBottomOffset }}>
+      <div style={wrapperStyle}>
         <EpubReader
           app={this.app}
           file={this.file}
           contents={this.fileContent}
           title={this.file.basename}
           scrolled={this.settings.scrolledView}
+          highlightColor={this.settings.highlightColor}
+          fontSizePercent={this.settings.fontSizePercent}
+          followObsidianTheme={this.settings.followObsidianTheme}
+          followObsidianFont={this.settings.followObsidianFont}
+          selectionNotePath={this.settings.selectionNotePath}
+          selectionNoteUseSameFolder={this.settings.selectionNoteUseSameFolder}
+          noteTags={this.settings.tags}
           initialLocation={initialLocation}
           jumpCfiRange={this.jumpCfiRange}
           highlights={this.highlights}
@@ -183,6 +206,10 @@ Date: ${moment().toLocaleString()}
 
     // consume jump (one shot)
     this.jumpCfiRange = null;
+  }
+
+  private getHighlightsKey(list: BacklinkHighlight[]): string {
+    return list.map((h) => `${h.cfiRange}|${h.sourceFile.path}`).join("\n");
   }
 
   onunload(): void {

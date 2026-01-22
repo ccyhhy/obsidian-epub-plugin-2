@@ -19,14 +19,15 @@ function isLikelyInEditor(target: HTMLElement): boolean {
 }
 
 function getHrefFromTarget(target: HTMLElement): string | null {
+  const dataEl = target.closest("[data-href]") as HTMLElement | null;
+  const dataHref = dataEl?.getAttribute("data-href");
   const el = target.closest("a.internal-link, span.internal-link, a") as HTMLElement | null;
   if (!el) return null;
 
-  const dataHref = el.getAttribute("data-href");
-  if (dataHref) return dataHref;
-
   const href = el.getAttribute("href");
+  if (dataHref && dataHref.indexOf("#cfi64=") !== -1) return dataHref;
   if (href) return href;
+  if (dataHref) return dataHref;
 
   return null;
 }
@@ -72,9 +73,7 @@ export default class EpubPlugin extends Plugin implements ProgressStore {
     // ====== 1) 唯一拦截入口：workspace click ======
     this.registerEvent(
       // @ts-ignore - some obsidian typings may not include 'click' yet
-      this.app.workspace.on("click", (evt: MouseEvent) => {
-        if (evt.defaultPrevented) return;
-
+      this.app.workspace.on("click", async (evt: MouseEvent) => {
         const target = evt.target as HTMLElement | null;
         if (!target) return;
 
@@ -105,9 +104,22 @@ export default class EpubPlugin extends Plugin implements ProgressStore {
           existing ??
           this.app.workspace.getLeaf("split", "vertical") ??
           this.app.workspace.getLeaf(false);
+        const pushJump = () => {
+          // @ts-ignore - view typings
+          (leaf.view as any)?.setEphemeralState?.({ cfi64: parsed.cfi64 });
+          // @ts-ignore - older typings may not include setActiveLeaf
+          (this.app.workspace as any)?.setActiveLeaf?.(leaf, { focus: false });
+        };
 
-        // 原子化打开 + eState 传参（更稳：直接 openFile 触发 FileView 生命周期）
-        leaf.openFile(bookFile, { active: true, eState: { cfi64: parsed.cfi64 } });
+        if (existing) {
+          // Already open: push jump state directly to the view.
+          pushJump();
+          return;
+        }
+
+        // ????? + eState ????????????
+        await leaf.openFile(bookFile, { active: true, eState: { cfi64: parsed.cfi64 } });
+        pushJump();
       })
     );
 
